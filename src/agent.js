@@ -1,3 +1,5 @@
+import { execSync } from 'child_process';
+
 /**
  * AI Agent for Log Analysis
  *
