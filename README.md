@@ -204,3 +204,23 @@ Run the test suite using Node.js's native test runner:
 npm test
 ```
 All 14 tests covering API endpoints, JSON validation, error handling, AI agent heuristics, and MCP registrations will execute.
+
+---
+
+## Running with Docker
+
+### Build Image
+```bash
+docker build -t log-analyzer-mcp-server .
+```
+
+### Run Container
+```bash
+docker run -d -p 3000:3000 --name log-analyzer log-analyzer-mcp-server
+```
+
+Or with Docker Compose:
+```bash
+docker compose up -d
+```
+
