@@ -231,10 +231,10 @@ ${JSON.stringify(logData, null, 2)}`;
         signal: abortController.signal
       }
       const response = await fetch(url, option);
-
       if (response.ok) {
         const data = await response.json();
         const content = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        console.log("response=====>", data)
         if (content) return cleanProbableIssue(content);
       } else {
         const errBody = await response.text();
