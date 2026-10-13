@@ -236,7 +236,7 @@ let prompts= JSON.stringify(logData, null, 2)
       if (response.ok) {
         const data = await response.json();
         const content = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-        console.log("response=====>",JSON.stringify(content))
+        console.log("response=====>",JSON.stringify(data))
         if (content) {
           console.log("returned=====>",JSON.stringify(cleanProbableIssue(content)))
           return cleanProbableIssue(content);
