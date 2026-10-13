@@ -211,7 +211,7 @@ ${JSON.stringify(logData, null, 2)}`;
 
     // 2. Google Gemini API
     if (process.env.GEMINI_API_KEY) {
-      const model = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+      const model = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env.GEMINI_API_KEY}`;
 
       const response = await fetch(url, {
@@ -228,6 +228,9 @@ ${JSON.stringify(logData, null, 2)}`;
         const data = await response.json();
         const content = data?.candidates?.[0]?.content?.parts?.[0]?.text;
         if (content) return cleanProbableIssue(content);
+      } else {
+        const errBody = await response.text();
+        console.warn(`[Agent] Gemini API error (status ${response.status}): ${errBody}`);
       }
     }
 
