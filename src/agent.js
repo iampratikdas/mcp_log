@@ -235,11 +235,19 @@ let prompts= JSON.stringify(logData, null, 2)
       const response = await fetch(url, option);
       if (response.ok) {
         const data = await response.json();
-        const content = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-        console.log("response=====>",JSON.stringify(data))
-        if (content) {
-          console.log("returned=====>",JSON.stringify(cleanProbableIssue(content)))
-          return cleanProbableIssue(content);
+        // const content = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (data) {
+          let text=''
+          data.forEach((candidate, index) => {
+            const content = candidate?.candidates[0]?.content?.parts[0]?.text;
+            text += content;
+          });
+        }
+        // console.log("response=================>",JSON.stringify(data))
+        console.log("response==text==>",JSON.stringify(text))
+        if (text) {
+          console.log("returned=====>",JSON.stringify(cleanProbableIssue(text)))
+          return cleanProbableIssue(text);
         }
       } else {
         const errBody = await response.text();
