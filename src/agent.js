@@ -210,13 +210,18 @@ ${JSON.stringify(logData, null, 2)}`;
     }
 
     // 2. Google Gemini API
-    if (process.env.GEMINI_API_KEY) {
+    if (true) {
+    // if (process.env.GEMINI_API_KEY) {
       const model = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env.GEMINI_API_KEY}`;
+      const url = `https://aiplatform.googleapis.com/v1/projects/panchmeshali/locations/global/publishers/google/models/gemini-3.1-flash-lite:streamGenerateContent`;
+      // const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env.GEMINI_API_KEY}`;
 
       const response = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: "Bearer $(gcloud auth application-default print-access-token)",
+        },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
           generationConfig: { maxOutputTokens: 60, temperature: 0.1 }
