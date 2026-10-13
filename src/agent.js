@@ -236,9 +236,9 @@ let prompts= JSON.stringify(logData, null, 2)
       if (response.ok) {
         const data = await response.json();
         // const content = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        let text=''
         if (data) {
-          let text=''
-          data.forEach((candidate, index) => {
+          data.forEach((candidate) => {
             const content = candidate?.candidates[0]?.content?.parts[0]?.text;
             text += content;
           });
