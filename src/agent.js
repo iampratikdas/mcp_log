@@ -225,7 +225,7 @@ ${JSON.stringify(logData, null, 2)}`;
           'Authorization': `Bearer ${accessToken}`
         },
         body: JSON.stringify({
-          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          contents: [{ role: 'user', }],
           generationConfig: { maxOutputTokens: 60, temperature: 0.1 }
         }),
         signal: abortController.signal
