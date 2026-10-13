@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import { analyzeLog } from './agent.js';
 import { createMcpServer } from './mcp-server.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
+import { createSlackAlertMessage, handleSlackInteraction, verifySlackSignature } from './slack.js';
 
 dotenv.config();
 
@@ -15,10 +16,24 @@ dotenv.config();
 export function createApp() {
   const app = express();
 
-  // 1. JSON Body Parser with explicit payload limit
-  app.use(express.json({ limit: '2mb' }));
+  // 1. JSON Body Parser with raw body capture for signature verification
+  app.use(express.json({
+    limit: '2mb',
+    verify: (req, res, buf) => {
+      req.rawBody = buf;
+    }
+  }));
 
-  // 2. Strict Error Handling for Invalid/Malformed JSON Input
+  // 2. URL-encoded Body Parser (Slack sends interactivity payloads as x-www-form-urlencoded)
+  app.use(express.urlencoded({
+    extended: true,
+    limit: '2mb',
+    verify: (req, res, buf) => {
+      req.rawBody = buf;
+    }
+  }));
+
+  // 3. Strict Error Handling for Invalid/Malformed JSON Input
   app.use((err, req, res, next) => {
     if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
       return res.status(400).json({
@@ -42,14 +57,6 @@ export function createApp() {
    *
    * Accepts a request body containing a JSON log object, passes it
    * to an AI agent for analysis, and returns the concise probable issue.
-   *
-   * Request format:
-   *   { ...json log properties... }
-   *   or
-   *   { "log": { ...json log properties... } }
-   *
-   * Response format:
-   *   { "issue": "<probable issue>" }
    */
   app.post('/analyze-log', async (req, res) => {
     try {
@@ -76,7 +83,7 @@ export function createApp() {
       // Pass the log content to the AI agent
       const probableIssue = await analyzeLog(logContent);
 
-      // Return concise response as requested: { "issue": "<probable issue>" }
+      // Return concise response: { "issue": "<probable issue>" }
       return res.status(200).json({
         issue: probableIssue
       });
@@ -86,6 +93,86 @@ export function createApp() {
         error: 'Internal Server Error',
         message: error.message || 'An unexpected error occurred during log analysis.'
       });
+    }
+  });
+
+  /**
+   * Slack Interactivity Endpoint: POST /slack/interactions
+   *
+   * Receives button clicks from Slack Block Kit, validates signature (if configured),
+   * immediately acknowledges to avoid 3-second timeout, then runs log analysis
+   * and posts the summary back to the Slack channel using payload.response_url.
+   */
+  app.post('/slack/interactions', async (req, res) => {
+    try {
+      // 1. Signature verification if SLACK_SIGNING_SECRET is configured
+      const signingSecret = process.env.SLACK_SIGNING_SECRET;
+      if (signingSecret) {
+        const isValid = verifySlackSignature({
+          signature: req.headers['x-slack-signature'],
+          timestamp: req.headers['x-slack-request-timestamp'],
+          rawBody: req.rawBody,
+          signingSecret
+        });
+
+        if (!isValid) {
+          return res.status(401).json({ error: 'Invalid Slack signature' });
+        }
+      }
+
+      // 2. Extract payload: Slack sends URL-encoded form data where 'payload' is a JSON string
+      let payload;
+      if (typeof req.body.payload === 'string') {
+        try {
+          payload = JSON.parse(req.body.payload);
+        } catch {
+          return res.status(400).json({ error: 'Invalid JSON payload in form-urlencoded body' });
+        }
+      } else if (req.body && typeof req.body === 'object' && req.body.type) {
+        payload = req.body;
+      } else {
+        return res.status(400).json({ error: 'Invalid payload: missing Slack interactive payload' });
+      }
+
+      const isSync = req.query.sync === 'true' || req.headers['x-test-sync'] === 'true';
+
+      if (isSync) {
+        // Synchronous mode (used for automated tests or debugging)
+        const result = await handleSlackInteraction(payload);
+        return res.status(200).json(result);
+      }
+
+      // 3. Slack 3-second timeout rule: Immediately acknowledge receipt
+      res.status(200).send();
+
+      // 4. Asynchronously analyze log and post summary to Slack response_url
+      handleSlackInteraction(payload).catch((err) => {
+        console.error('[Slack Interaction Background Error]:', err);
+      });
+    } catch (err) {
+      console.error('[Slack Interaction Handler Error]:', err);
+      if (!res.headersSent) {
+        return res.status(500).json({ error: 'Failed to process Slack interaction', message: err.message });
+      }
+    }
+  });
+
+  /**
+   * Helper Endpoint: POST /slack/create-alert
+   *
+   * Formats a JSON log into a Slack Block Kit alert message containing
+   * the "Analyze with MCP" interactive button.
+   */
+  app.post('/slack/create-alert', (req, res) => {
+    try {
+      const { log, title, channel } = req.body || {};
+      if (!log || typeof log !== 'object' || Array.isArray(log) || Object.keys(log).length === 0) {
+        return res.status(400).json({ error: 'Missing or invalid log object in request body' });
+      }
+      const slackMessage = createSlackAlertMessage({ log, title, channel });
+      return res.status(200).json({ message: slackMessage });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
     }
   });
 
@@ -143,9 +230,11 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const server = app.listen(PORT, () => {
     console.log(`=======================================================`);
     console.log(` Log Analyzer MCP Server listening on port ${PORT}`);
-    console.log(` Endpoint:   POST http://localhost:${PORT}/analyze-log`);
-    console.log(` MCP SSE:    GET  http://localhost:${PORT}/sse`);
-    console.log(` Health:     GET  http://localhost:${PORT}/health`);
+    console.log(` Endpoint:     POST http://localhost:${PORT}/analyze-log`);
+    console.log(` Slack Int:    POST http://localhost:${PORT}/slack/interactions`);
+    console.log(` Slack Alert:  POST http://localhost:${PORT}/slack/create-alert`);
+    console.log(` MCP SSE:      GET  http://localhost:${PORT}/sse`);
+    console.log(` Health:       GET  http://localhost:${PORT}/health`);
     console.log(`=======================================================`);
   });
 

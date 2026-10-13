@@ -4,9 +4,9 @@ FROM node:22-alpine
 # Set working directory inside container
 WORKDIR /app
 
-# Set environment defaults
+# Set environment defaults (Cloud Run injects PORT=8080 by default)
 ENV NODE_ENV=production \
-    PORT=3000
+    PORT=8080
 
 # Copy package manifests first for optimal Docker layer caching
 COPY package*.json ./
@@ -20,12 +20,12 @@ COPY src/ ./src/
 # Ensure container runs with least-privilege non-root user
 USER node
 
-# Expose default HTTP/MCP port
-EXPOSE 3000
+# Expose default Cloud Run / HTTP port
+EXPOSE 8080
 
-# Built-in container health check hitting the /health route
+# Built-in container health check hitting the /health route dynamically via $PORT
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1
+  CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:${PORT:-8080}/health || exit 1
 
-# Launch the server
+# Launch the server (inherits SIGTERM and SIGINT for Cloud Run graceful shutdown)
 CMD ["node", "src/server.js"]

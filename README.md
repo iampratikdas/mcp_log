@@ -196,6 +196,73 @@ When `npm start` is running, MCP clients can connect over SSE:
 
 ---
 
+---
+
+## Slack Interactivity Integration
+
+You can trigger log analysis directly from a Slack channel when an engineer clicks an interactive button, and post the diagnostic summary back into the channel.
+
+### How It Works
+
+```
+[ Slack Channel Alert ]
+         │
+    (Clicks "🔍 Analyze with MCP" Button)
+         │
+         ▼
+[ POST /slack/interactions ]  ───────►  Immediate HTTP 200 OK (<3s timeout rule)
+         │
+   (Asynchronous)
+         ▼
+[ MCP Engine (analyze_log) ]  ───────►  Diagnoses issue with AI / Heuristics
+         │
+         ▼
+[ POST payload.response_url ] ───────►  Renders summary back into Slack channel
+```
+
+### Endpoints
+
+1. **`POST /slack/create-alert`**
+   Generates a Slack Block Kit message with an embedded interactive button containing the log payload:
+   ```bash
+   curl -X POST http://localhost:3000/slack/create-alert \
+     -H "Content-Type: application/json" \
+     -d '{
+       "title": "🚨 Auth Service Error",
+       "log": {
+         "service": "auth-service",
+         "level": "error",
+         "message": "connection refused when connecting to postgres at 5432"
+       }
+     }'
+   ```
+
+2. **`POST /slack/interactions`**
+   The webhook URL configured in your Slack App under **Interactivity & Shortcuts**:
+   - Immediately acknowledges Slack (`200 OK`) to satisfy the 3-second deadline.
+   - Extracts the log payload from `action.value`.
+   - Runs the MCP / AI diagnosis.
+   - Posts the rich Block Kit diagnosis to the channel via Slack's `response_url`.
+
+### Simulating a Slack Button Click with cURL
+
+```bash
+curl -X POST "http://localhost:3000/slack/interactions?sync=true" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  --data-urlencode 'payload={
+    "type": "block_actions",
+    "user": { "id": "U12345", "name": "alice" },
+    "actions": [
+      {
+        "action_id": "btn_analyze_log",
+        "value": "{\"level\":\"error\",\"message\":\"connection refused on port 5432\"}"
+      }
+    ]
+  }'
+```
+
+---
+
 ## Running Automated Tests
 
 Run the test suite using Node.js's native test runner:
@@ -203,7 +270,7 @@ Run the test suite using Node.js's native test runner:
 ```bash
 npm test
 ```
-All 14 tests covering API endpoints, JSON validation, error handling, AI agent heuristics, and MCP registrations will execute.
+All 25 tests covering HTTP endpoints, Slack Block Kit button interactions, signature verification, error handling, AI agent heuristics, and MCP registrations will execute.
 
 ---
 
@@ -223,4 +290,5 @@ Or with Docker Compose:
 ```bash
 docker compose up -d
 ```
+
 
