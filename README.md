@@ -1,0 +1,206 @@
+# Log Analyzer MCP Server
+
+A lightweight Node.js Model Context Protocol (MCP) and Express.js server that accepts JSON log objects, passes them to an AI agent for diagnostic analysis, and returns a concise probable root-cause issue.
+
+---
+
+## Features
+
+- **Single HTTP Endpoint**: Exposes `POST /analyze-log`.
+- **AI Agent Diagnostics**: Evaluates error messages, status codes, and stack traces to return a concise summary string (`{ "issue": "<probable issue>" }`).
+- **Hybrid AI Engine**:
+  - Connects to LLM providers (**OpenAI**, **Google Gemini**, or **Anthropic Claude**) when configured via environment variables.
+  - Features an intelligent, built-in **heuristic diagnostic engine** that runs completely offline with zero setup/external API keys needed.
+- **Robust JSON Error Handling**: Intercepts malformed or invalid JSON payloads and responds with `HTTP 400 Bad Request`.
+- **Dual MCP Protocol Support**:
+  - Direct HTTP REST API via Express.js (`POST /analyze-log`).
+  - Standard MCP server tool (`analyze_log`) supporting both **Server-Sent Events (SSE)** and **stdio** transport for hosts like Claude Desktop, Cursor, and Antigravity.
+- **Lightweight & Fast**: Built with modern ES Modules and native Node.js APIs.
+
+---
+
+## Getting Started
+
+### 1. Installation
+
+Ensure Node.js (v18+) is installed:
+
+```bash
+npm install
+```
+
+### 2. Configuration (Optional)
+
+Copy `.env.example` to `.env` if you want to use an LLM provider:
+
+```bash
+# Optional: OpenAI / Local Ollama
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4o-mini
+
+# Optional: Google Gemini
+# GEMINI_API_KEY=...
+
+# Optional: Port (default: 3000)
+PORT=3000
+```
+
+> **Note:** If no API key is specified, the server automatically utilizes the high-accuracy built-in heuristic AI agent, so it runs completely out of the box!
+
+### 3. Start the Server
+
+```bash
+npm start
+```
+
+---
+
+## API Specification
+
+### `POST /analyze-log`
+
+Analyzes a JSON log object and returns the probable issue.
+
+#### Headers
+```http
+Content-Type: application/json
+```
+
+#### Request Body
+Can be a direct log object or wrapped in a `log` property:
+
+```json
+{
+  "timestamp": "2026-10-13T07:00:00Z",
+  "level": "error",
+  "service": "billing-service",
+  "message": "Connection refused when connecting to postgres at db.internal:5432"
+}
+```
+
+#### Success Response (`200 OK`)
+```json
+{
+  "issue": "PostgreSQL database connection refused on port 5432"
+}
+```
+
+---
+
+### Error Handling
+
+#### Malformed JSON Syntax (`400 Bad Request`)
+When the client sends invalid JSON syntax (e.g., missing quotes, trailing comma):
+```bash
+curl -X POST http://localhost:3000/analyze-log \
+  -H "Content-Type: application/json" \
+  -d '{"level": "error", "message": unquoted}'
+```
+Response:
+```json
+{
+  "error": "Invalid JSON input",
+  "message": "Malformed JSON payload: Expected property name or '}' in JSON..."
+}
+```
+
+#### Non-Object or Empty Payload (`400 Bad Request`)
+When the client sends an empty payload, an array, or an empty `{}`:
+```bash
+curl -X POST http://localhost:3000/analyze-log \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+Response:
+```json
+{
+  "error": "Invalid JSON input",
+  "message": "Request body must be a valid, non-empty JSON log object."
+}
+```
+
+---
+
+## Example Usage with cURL
+
+### 1. Database Connection Failure
+```bash
+curl -X POST http://localhost:3000/analyze-log \
+  -H "Content-Type: application/json" \
+  -d '{
+    "timestamp": "2026-10-13T07:00:00Z",
+    "level": "error",
+    "service": "auth-service",
+    "message": "connection refused when connecting to postgres at 5432"
+  }'
+```
+**Response:**
+```json
+{"issue":"PostgreSQL database connection refused on port 5432"}
+```
+
+### 2. Memory Exhaustion
+```bash
+curl -X POST http://localhost:3000/analyze-log \
+  -H "Content-Type: application/json" \
+  -d '{
+    "level": "fatal",
+    "error": "FATAL ERROR: Ineffective mark-compacts near heap limit Allocation failed - JavaScript heap out of memory"
+  }'
+```
+**Response:**
+```json
+{"issue":"Node.js V8 process out of memory (heap exhaustion)"}
+```
+
+### 3. Expired Authentication Token
+```bash
+curl -X POST http://localhost:3000/analyze-log \
+  -H "Content-Type: application/json" \
+  -d '{
+    "error": "jwt expired at 1700000000",
+    "statusCode": 401
+  }'
+```
+**Response:**
+```json
+{"issue":"Authentication failure: Expired JWT token"}
+```
+
+---
+
+## MCP (Model Context Protocol) Usage
+
+### Stdio Transport (Claude Desktop / Cursor / Antigravity)
+Run the server over stdio:
+```bash
+npm run mcp
+```
+
+Add to your MCP configuration (e.g. `claude_desktop_config.json`):
+```json
+{
+  "mcpServers": {
+    "log-analyzer": {
+      "command": "node",
+      "args": ["E:/DEMO/src/mcp-server.js"]
+    }
+  }
+}
+```
+
+### Server-Sent Events (SSE) Transport
+When `npm start` is running, MCP clients can connect over SSE:
+- **SSE URL:** `http://localhost:3000/sse`
+- **Messages URL:** `http://localhost:3000/messages`
+
+---
+
+## Running Automated Tests
+
+Run the test suite using Node.js's native test runner:
+
+```bash
+npm test
+```
+All 14 tests covering API endpoints, JSON validation, error handling, AI agent heuristics, and MCP registrations will execute.
