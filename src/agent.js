@@ -226,18 +226,21 @@ let prompts= JSON.stringify(logData, null, 2)
           'Authorization': `Bearer ${accessToken}`
         },
         body: JSON.stringify({
-          contents: [{ role: 'user', parts: [{ text: prompts }] }],
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
           generationConfig: { maxOutputTokens: 60, temperature: 0.1 }
         }),
         signal: abortController.signal
       }
-       console.log("start========================>",JSON.stringify(option))
+      //  console.log("start========================>",JSON.stringify(option))
       const response = await fetch(url, option);
       if (response.ok) {
         const data = await response.json();
         const content = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-        console.log("response=====>",JSON.stringify(data))
-        if (content) return cleanProbableIssue(content);
+        console.log("response=====>",JSON.stringify(content))
+        if (content) {
+          console.log("returned=====>",JSON.stringify(cleanProbableIssue(content)))
+          return cleanProbableIssue(content);
+        }
       } else {
         const errBody = await response.text();
         console.warn(`[Agent] Gemini API error (status ${response.status}): ${errBody}`);
