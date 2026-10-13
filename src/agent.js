@@ -176,6 +176,7 @@ Rules:
 
 JSON Log Content:
 ${JSON.stringify(logData, null, 2)}`;
+let prompts= JSON.stringify(logData, null, 2)
 
   const abortController = new AbortController();
   const timeoutId = setTimeout(() => abortController.abort(), 8000); // 8 second timeout
@@ -225,7 +226,7 @@ ${JSON.stringify(logData, null, 2)}`;
           'Authorization': `Bearer ${accessToken}`
         },
         body: JSON.stringify({
-          contents: [{ role: 'user', }],
+          contents: [{ role: 'user', parts: [{ text: prompts }] }],
           generationConfig: { maxOutputTokens: 60, temperature: 0.1 }
         }),
         signal: abortController.signal
