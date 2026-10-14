@@ -472,5 +472,49 @@ describe('Slack Interactivity & MCP Integration', () => {
       const data = await res.json();
       assert.equal(data.ignored, true);
     });
+
+    it('gracefully handles direct error payloads on /slack/events without event_callback wrapper', async () => {
+      const bodyStr = JSON.stringify({
+        command: 'investigate',
+        errorMessage: 'Error: No translations found for language JA [ undefined, FirestoreTranslationRepository ]'
+      });
+      const authHeaders = getAuthHeaders(bodyStr);
+
+      const res = await fetch(`${baseUrl}/slack/events`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders
+        },
+        body: bodyStr
+      });
+
+      assert.equal(res.status, 200);
+      const data = await res.json();
+      assert.equal(data.ok, true);
+      assert.match(data.result, /translation/i);
+    });
+
+    it('gracefully handles direct error payloads on /slack/interactions without block_actions wrapper', async () => {
+      const bodyStr = JSON.stringify({
+        command: 'investigate',
+        errorMessage: 'Error: Redis connection timeout on port 6379'
+      });
+      const authHeaders = getAuthHeaders(bodyStr);
+
+      const res = await fetch(`${baseUrl}/slack/interactions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders
+        },
+        body: bodyStr
+      });
+
+      assert.equal(res.status, 200);
+      const data = await res.json();
+      assert.equal(data.success, true);
+      assert.match(data.issue, /redis/i);
+    });
   });
 });

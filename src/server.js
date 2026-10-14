@@ -151,9 +151,19 @@ export function createApp() {
         });
         return;
       }
-      console.log("payload====================================>" , payload)
+      console.log('payload====================================>', payload);
       // 5. Ensure valid interactive payload structure
-      if (!payload || typeof payload !== 'object' || !payload.type) {
+      if (!payload || typeof payload !== 'object') {
+        return res.status(400).json({ error: 'Invalid payload: missing Slack interactive payload' });
+      }
+
+      // If user sends direct { command, errorMessage } or { message } to /slack/interactions
+      if (!payload.type && (payload.errorMessage || payload.message || payload.command)) {
+        const issue = await analyzeLog(payload);
+        return res.status(200).json({ success: true, issue });
+      }
+
+      if (!payload.type) {
         return res.status(400).json({ error: 'Invalid payload: missing Slack interactive payload' });
       }
 
@@ -198,21 +208,37 @@ export function createApp() {
    */
   app.post('/slack/events', async (req, res) => {
     try {
-      // 1. Normalize payload from either JSON body or form-urlencoded string
+      // 1. Normalize payload from JSON body, URL-encoded body, or raw body buffer
       let payload = req.body;
-      if (typeof req.body?.payload === 'string') {
+      if (typeof payload === 'string') {
         try {
-          payload = JSON.parse(req.body.payload);
+          payload = JSON.parse(payload);
+        } catch {
+          // Keep as string
+        }
+      }
+      if (typeof payload?.payload === 'string') {
+        try {
+          payload = JSON.parse(payload.payload);
         } catch {
           return res.status(400).json({ error: 'Invalid JSON payload in form-urlencoded body' });
         }
       }
+      if ((!payload || (typeof payload === 'object' && Object.keys(payload).length === 0)) && req.rawBody && req.rawBody.length > 0) {
+        try {
+          payload = JSON.parse(req.rawBody.toString('utf8'));
+        } catch {
+          // Keep unparsed
+        }
+      }
 
-      // 2. Handle URL verification challenge FIRST (Event Subscriptions handshake)
-      const challenge = payload?.challenge || req.body?.challenge;
-      if (payload?.type === 'url_verification' || req.body?.type === 'url_verification' || (challenge && !payload?.type)) {
+      console.log('[Slack Events] Incoming request payload:', JSON.stringify(payload));
+
+      // 2. Handle URL verification challenge FIRST (Event Subscriptions setup handshake)
+      const challenge = payload?.challenge ?? req.body?.challenge ?? req.query?.challenge;
+      if (payload?.type === 'url_verification' || req.body?.type === 'url_verification' || challenge !== undefined) {
         console.log('[Slack Events] Responding to url_verification challenge:', challenge);
-        return res.status(200).json({ challenge });
+        return res.status(200).json({ challenge: challenge || '' });
       }
 
       // 3. Signature verification if SLACK_SIGNING_SECRET is configured
@@ -237,14 +263,15 @@ export function createApp() {
       }
 
       // 5. Handle event callbacks (e.g. app_mention)
-      if (payload?.type === 'event_callback') {
-        const event = payload.event;
-        console.log(`[Slack Events] Received ${event?.type} in channel: ${event?.channel || 'unknown'}`);
+      const event = payload?.event || req.body?.event || (payload?.type === 'app_mention' ? payload : null);
+      if (payload?.type === 'event_callback' || event) {
+        const targetEvent = event || payload;
+        console.log(`[Slack Events] Received ${targetEvent?.type || 'event'} in channel: ${targetEvent?.channel || 'unknown'}`);
 
         const isSync = req.query.sync === 'true' || req.headers['x-test-sync'] === 'true';
 
         if (isSync) {
-          const result = await handleSlackEvent(event);
+          const result = await handleSlackEvent(targetEvent);
           return res.status(200).json(result);
         }
 
@@ -252,10 +279,36 @@ export function createApp() {
         res.status(200).send();
 
         // Process in background and reply to the channel/thread
-        handleSlackEvent(event).catch((err) => {
+        handleSlackEvent(targetEvent).catch((err) => {
           console.error('[Slack Events Background Error]:', err);
         });
         return;
+      }
+
+      // 6. Gracefully handle interactive button actions if forwarded to /slack/events by mistake
+      if (payload?.type === 'block_actions') {
+        const isSync = req.query.sync === 'true' || req.headers['x-test-sync'] === 'true';
+        if (isSync) {
+          const result = await handleSlackInteraction(payload);
+          return res.status(200).json(result);
+        }
+        res.status(200).send();
+        handleSlackInteraction(payload).catch((err) => {
+          console.error('[Slack Interaction Background Error]:', err);
+        });
+        return;
+      }
+
+      // 7. Graceful fallback for direct testing payloads (e.g. { command, errorMessage } or { message })
+      if (payload?.errorMessage || payload?.message || payload?.command || payload?.text) {
+        const fallbackEvent = {
+          type: 'app_mention',
+          channel: payload.channel || 'general',
+          user: payload.user?.id || payload.user || 'developer',
+          text: payload.errorMessage || payload.message || payload.text || payload.command
+        };
+        const result = await handleSlackEvent(fallbackEvent);
+        return res.status(200).json(result);
       }
 
       return res.status(400).json({ error: 'Unsupported Slack event type' });

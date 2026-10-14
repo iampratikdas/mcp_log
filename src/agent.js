@@ -22,10 +22,16 @@ export function analyzeLogWithHeuristics(logData) {
   const text = rawString.toLowerCase();
 
   // Extract explicit message or error fields if available
-  const messageField = logData.message || logData.msg || logData.error || logData.err?.message || '';
+  const messageField = logData.message || logData.msg || logData.error || logData.errorMessage || logData.err?.message || '';
   const messageText = typeof messageField === 'string' ? messageField : JSON.stringify(messageField);
 
   // 1. Database & Persistence Issues
+  if (text.includes('redis')) {
+    return 'Redis cache connection or timeout on port 6379';
+  }
+  if (text.includes('translations found') || text.includes('translation')) {
+    return 'Missing translation key or locale bundle in FirestoreTranslationRepository';
+  }
   if (text.includes('connection refused') && (text.includes('5432') || text.includes('postgres'))) {
     return 'PostgreSQL database connection refused on port 5432';
   }
