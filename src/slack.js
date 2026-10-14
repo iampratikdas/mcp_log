@@ -197,6 +197,16 @@ export function handleSlackInteraction(rawPayload, options = {}) {
   // Slack sends payload as JSON string inside urlencoded req.body.payload
   const payload = typeof rawPayload === 'string' ? JSON.parse(rawPayload) : rawPayload;
 
+  // Handle URL verification challenge gracefully if forwarded here
+  if (payload?.type === 'url_verification') {
+    return { success: true, challenge: payload.challenge };
+  }
+
+  // Handle event callback gracefully if forwarded here
+  if (payload?.type === 'event_callback') {
+    return handleSlackEvent(payload.event, options);
+  }
+
   if (!payload || payload.type !== 'block_actions') {
     throw new Error('Unsupported or invalid Slack interaction payload');
   }

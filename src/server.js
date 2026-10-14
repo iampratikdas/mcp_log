@@ -105,7 +105,24 @@ export function createApp() {
    */
   app.post('/slack/interactions', async (req, res) => {
     try {
-      // 1. Signature verification if SLACK_SIGNING_SECRET is configured
+      // 1. Normalize payload from either JSON body or form-urlencoded string
+      let payload = req.body;
+      if (typeof req.body?.payload === 'string') {
+        try {
+          payload = JSON.parse(req.body.payload);
+        } catch {
+          return res.status(400).json({ error: 'Invalid JSON payload in form-urlencoded body' });
+        }
+      }
+
+      // 2. Handle URL verification challenge FIRST (Event Subscriptions handshake)
+      const challenge = payload?.challenge || req.body?.challenge;
+      if (payload?.type === 'url_verification' || req.body?.type === 'url_verification' || (challenge && !payload?.type)) {
+        console.log('[Slack Interactions] Responding to url_verification challenge:', challenge);
+        return res.status(200).json({ challenge });
+      }
+
+      // 3. Signature verification if SLACK_SIGNING_SECRET is configured
       const signingSecret = process.env.SLACK_SIGNING_SECRET;
       if (signingSecret) {
         const isValid = verifySlackSignature({
@@ -120,14 +137,9 @@ export function createApp() {
         }
       }
 
-      // Handle URL verification if user set /slack/interactions as Event Subscriptions URL
-      if (req.body?.type === 'url_verification') {
-        return res.status(200).json({ challenge: req.body.challenge });
-      }
-
-      // Handle event callback if sent to this endpoint
-      if (req.body?.type === 'event_callback') {
-        const event = req.body.event;
+      // 4. Handle event callback if sent to this endpoint
+      if (payload?.type === 'event_callback') {
+        const event = payload.event;
         const isSync = req.query.sync === 'true' || req.headers['x-test-sync'] === 'true';
         if (isSync) {
           const result = await handleSlackEvent(event);
@@ -140,17 +152,8 @@ export function createApp() {
         return;
       }
 
-      // 2. Extract payload: Slack sends URL-encoded form data where 'payload' is a JSON string
-      let payload;
-      if (typeof req.body.payload === 'string') {
-        try {
-          payload = JSON.parse(req.body.payload);
-        } catch {
-          return res.status(400).json({ error: 'Invalid JSON payload in form-urlencoded body' });
-        }
-      } else if (req.body && typeof req.body === 'object' && req.body.type) {
-        payload = req.body;
-      } else {
+      // 5. Ensure valid interactive payload structure
+      if (!payload || typeof payload !== 'object' || !payload.type) {
         return res.status(400).json({ error: 'Invalid payload: missing Slack interactive payload' });
       }
 
@@ -158,17 +161,17 @@ export function createApp() {
       console.log(`[Slack Interaction] Received button action from channel: ${channelId || 'unknown'}`);
 
       const isSync = req.query.sync === 'true' || req.headers['x-test-sync'] === 'true';
-      console.log("payloadslack======>", payload);
+
       if (isSync) {
         // Synchronous mode (used for automated tests or debugging)
         const result = await handleSlackInteraction(payload);
         return res.status(200).json(result);
       }
 
-      // 3. Slack 3-second timeout rule: Immediately acknowledge receipt
+      // 6. Slack 3-second timeout rule: Immediately acknowledge receipt
       res.status(200).send();
 
-      // 4. Asynchronously analyze log and post summary to target channel / response_url
+      // 7. Asynchronously analyze log and post summary to target channel / response_url
       handleSlackInteraction(payload).catch((err) => {
         console.error('[Slack Interaction Background Error]:', err);
       });
@@ -195,7 +198,24 @@ export function createApp() {
    */
   app.post('/slack/events', async (req, res) => {
     try {
-      // 1. Signature verification if SLACK_SIGNING_SECRET is configured
+      // 1. Normalize payload from either JSON body or form-urlencoded string
+      let payload = req.body;
+      if (typeof req.body?.payload === 'string') {
+        try {
+          payload = JSON.parse(req.body.payload);
+        } catch {
+          return res.status(400).json({ error: 'Invalid JSON payload in form-urlencoded body' });
+        }
+      }
+
+      // 2. Handle URL verification challenge FIRST (Event Subscriptions handshake)
+      const challenge = payload?.challenge || req.body?.challenge;
+      if (payload?.type === 'url_verification' || req.body?.type === 'url_verification' || (challenge && !payload?.type)) {
+        console.log('[Slack Events] Responding to url_verification challenge:', challenge);
+        return res.status(200).json({ challenge });
+      }
+
+      // 3. Signature verification if SLACK_SIGNING_SECRET is configured
       const signingSecret = process.env.SLACK_SIGNING_SECRET;
       if (signingSecret) {
         const isValid = verifySlackSignature({
@@ -210,20 +230,15 @@ export function createApp() {
         }
       }
 
-      // 2. Handle Slack URL verification challenge during Event Subscriptions setup
-      if (req.body?.type === 'url_verification') {
-        return res.status(200).json({ challenge: req.body.challenge });
-      }
-
-      // 3. Avoid duplicate processing on Slack retries
+      // 4. Avoid duplicate processing on Slack retries
       if (req.headers['x-slack-retry-num']) {
         console.log(`[Slack Events] Ignoring retry attempt #${req.headers['x-slack-retry-num']}`);
         return res.status(200).send();
       }
 
-      // 4. Handle event callbacks (e.g. app_mention)
-      if (req.body?.type === 'event_callback') {
-        const event = req.body.event;
+      // 5. Handle event callbacks (e.g. app_mention)
+      if (payload?.type === 'event_callback') {
+        const event = payload.event;
         console.log(`[Slack Events] Received ${event?.type} in channel: ${event?.channel || 'unknown'}`);
 
         const isSync = req.query.sync === 'true' || req.headers['x-test-sync'] === 'true';

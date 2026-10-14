@@ -333,6 +333,30 @@ describe('Slack Interactivity & MCP Integration', () => {
       }
     });
 
+    it('handles url_verification challenge handshake when sent to /slack/interactions', async () => {
+      const payload = {
+        type: 'url_verification',
+        token: 'test_token',
+        challenge: 'interactions_verify_challenge_999'
+      };
+
+      const bodyStr = JSON.stringify(payload);
+      const authHeaders = getAuthHeaders(bodyStr);
+
+      const res = await fetch(`${baseUrl}/slack/interactions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders
+        },
+        body: bodyStr
+      });
+
+      assert.equal(res.status, 200);
+      const data = await res.json();
+      assert.equal(data.challenge, 'interactions_verify_challenge_999');
+    });
+
     it('returns 400 for invalid interaction payload', async () => {
       const bodyStr = JSON.stringify({ invalid: 'payload' });
       const authHeaders = getAuthHeaders(bodyStr);
