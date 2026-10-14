@@ -242,7 +242,20 @@ You can trigger log analysis directly from a Slack channel when an engineer clic
    - Immediately acknowledges Slack (`200 OK`) to satisfy the 3-second deadline.
    - Extracts the log payload from `action.value`.
    - Runs the MCP / AI diagnosis.
-   - Posts the rich Block Kit diagnosis to the channel via Slack's `response_url`.
+   - Posts the diagnosis directly to that channel via `chat.postMessage` or `response_url`.
+
+3. **`POST /slack/events`**
+   The Request URL configured in your Slack App under **Event Subscriptions**:
+   - Handles the initial `url_verification` challenge automatically.
+   - Listens to `app_mention` and `message.channels` bot events.
+   - When an engineer mentions the bot in a channel or thread with an error (e.g. `@bot connection refused on 5432`), analyzes the issue and replies directly to the channel thread using:
+     ```javascript
+     await client.chat.postMessage({
+       channel: event.channel,
+       thread_ts: event.thread_ts || event.ts,
+       text: response.ok ? `API response:\n${result}` : `API error (${response.status}): ${result}`
+     });
+     ```
 
 ### Simulating a Slack Button Click with cURL
 
@@ -252,12 +265,31 @@ curl -X POST "http://localhost:3000/slack/interactions?sync=true" \
   --data-urlencode 'payload={
     "type": "block_actions",
     "user": { "id": "U12345", "name": "alice" },
+    "channel": { "id": "C0123456" },
     "actions": [
       {
         "action_id": "btn_analyze_log",
         "value": "{\"level\":\"error\",\"message\":\"connection refused on port 5432\"}"
       }
     ]
+  }'
+```
+
+### Simulating an @mention Event with cURL
+
+```bash
+curl -X POST "http://localhost:3000/slack/events?sync=true" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "event_callback",
+    "event": {
+      "type": "app_mention",
+      "user": "U12345",
+      "channel": "C0123456",
+      "ts": "1700000000.000200",
+      "thread_ts": "1700000000.000100",
+      "text": "<@UBOT> connect ECONNREFUSED 127.0.0.1:5432"
+    }
   }'
 ```
 
@@ -270,7 +302,7 @@ Run the test suite using Node.js's native test runner:
 ```bash
 npm test
 ```
-All 25 tests covering HTTP endpoints, Slack Block Kit button interactions, signature verification, error handling, AI agent heuristics, and MCP registrations will execute.
+All 29 tests covering HTTP endpoints, Slack Events API (`app_mention`), Block Kit button interactions, signature verification, error handling, AI agent heuristics, and MCP registrations will execute.
 
 ---
 

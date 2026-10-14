@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 import { analyzeLog } from './agent.js';
 import { createMcpServer } from './mcp-server.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
-import { createSlackAlertMessage, handleSlackInteraction, verifySlackSignature } from './slack.js';
+import { createSlackAlertMessage, handleSlackInteraction, handleSlackEvent, slackClient, verifySlackSignature } from './slack.js';
 
 dotenv.config();
 
@@ -120,6 +120,26 @@ export function createApp() {
         }
       }
 
+      // Handle URL verification if user set /slack/interactions as Event Subscriptions URL
+      if (req.body?.type === 'url_verification') {
+        return res.status(200).json({ challenge: req.body.challenge });
+      }
+
+      // Handle event callback if sent to this endpoint
+      if (req.body?.type === 'event_callback') {
+        const event = req.body.event;
+        const isSync = req.query.sync === 'true' || req.headers['x-test-sync'] === 'true';
+        if (isSync) {
+          const result = await handleSlackEvent(event);
+          return res.status(200).json(result);
+        }
+        res.status(200).send();
+        handleSlackEvent(event).catch((err) => {
+          console.error('[Slack Events Background Error]:', err);
+        });
+        return;
+      }
+
       // 2. Extract payload: Slack sends URL-encoded form data where 'payload' is a JSON string
       let payload;
       if (typeof req.body.payload === 'string') {
@@ -134,6 +154,9 @@ export function createApp() {
         return res.status(400).json({ error: 'Invalid payload: missing Slack interactive payload' });
       }
 
+      const channelId = payload.channel?.id || payload.channel || payload.container?.channel_id || payload.channel_id;
+      console.log(`[Slack Interaction] Received button action from channel: ${channelId || 'unknown'}`);
+
       const isSync = req.query.sync === 'true' || req.headers['x-test-sync'] === 'true';
 
       if (isSync) {
@@ -145,7 +168,7 @@ export function createApp() {
       // 3. Slack 3-second timeout rule: Immediately acknowledge receipt
       res.status(200).send();
 
-      // 4. Asynchronously analyze log and post summary to Slack response_url
+      // 4. Asynchronously analyze log and post summary to target channel / response_url
       handleSlackInteraction(payload).catch((err) => {
         console.error('[Slack Interaction Background Error]:', err);
       });
@@ -153,6 +176,78 @@ export function createApp() {
       console.error('[Slack Interaction Handler Error]:', err);
       if (!res.headersSent) {
         return res.status(500).json({ error: 'Failed to process Slack interaction', message: err.message });
+      }
+    }
+  });
+
+  /**
+   * Slack Events API Endpoint: POST /slack/events
+   *
+   * Handles Slack Event Subscriptions:
+   * 1. URL Verification handshake (challenge)
+   * 2. 'app_mention' / 'message.channels' events when bot is tagged in a reply with an error
+   * 3. Analyzes the error and replies back to the channel/thread using client.chat.postMessage:
+   *    await client.chat.postMessage({
+   *      channel: event.channel,
+   *      thread_ts: event.thread_ts || event.ts,
+   *      text: response.ok ? `API response:\n${result}` : `API error (${response.status}): ${result}`
+   *    });
+   */
+  app.post('/slack/events', async (req, res) => {
+    try {
+      // 1. Signature verification if SLACK_SIGNING_SECRET is configured
+      const signingSecret = process.env.SLACK_SIGNING_SECRET;
+      if (signingSecret) {
+        const isValid = verifySlackSignature({
+          signature: req.headers['x-slack-signature'],
+          timestamp: req.headers['x-slack-request-timestamp'],
+          rawBody: req.rawBody,
+          signingSecret
+        });
+
+        if (!isValid) {
+          return res.status(401).json({ error: 'Invalid Slack signature' });
+        }
+      }
+
+      // 2. Handle Slack URL verification challenge during Event Subscriptions setup
+      if (req.body?.type === 'url_verification') {
+        return res.status(200).json({ challenge: req.body.challenge });
+      }
+
+      // 3. Avoid duplicate processing on Slack retries
+      if (req.headers['x-slack-retry-num']) {
+        console.log(`[Slack Events] Ignoring retry attempt #${req.headers['x-slack-retry-num']}`);
+        return res.status(200).send();
+      }
+
+      // 4. Handle event callbacks (e.g. app_mention)
+      if (req.body?.type === 'event_callback') {
+        const event = req.body.event;
+        console.log(`[Slack Events] Received ${event?.type} in channel: ${event?.channel || 'unknown'}`);
+
+        const isSync = req.query.sync === 'true' || req.headers['x-test-sync'] === 'true';
+
+        if (isSync) {
+          const result = await handleSlackEvent(event);
+          return res.status(200).json(result);
+        }
+
+        // Acknowledge receipt immediately to avoid 3-second timeout
+        res.status(200).send();
+
+        // Process in background and reply to the channel/thread
+        handleSlackEvent(event).catch((err) => {
+          console.error('[Slack Events Background Error]:', err);
+        });
+        return;
+      }
+
+      return res.status(400).json({ error: 'Unsupported Slack event type' });
+    } catch (err) {
+      console.error('[Slack Events Handler Error]:', err);
+      if (!res.headersSent) {
+        return res.status(500).json({ error: 'Failed to process Slack event', message: err.message });
       }
     }
   });
@@ -231,6 +326,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     console.log(`=======================================================`);
     console.log(` Log Analyzer MCP Server listening on port ${PORT}`);
     console.log(` Endpoint:     POST http://localhost:${PORT}/analyze-log`);
+    console.log(` Slack Events: POST http://localhost:${PORT}/slack/events`);
     console.log(` Slack Int:    POST http://localhost:${PORT}/slack/interactions`);
     console.log(` Slack Alert:  POST http://localhost:${PORT}/slack/create-alert`);
     console.log(` MCP SSE:      GET  http://localhost:${PORT}/sse`);

@@ -89,11 +89,11 @@ export function createSlackAlertMessage({ log, title = '🚨 Service Error Alert
  * @param {object} [options.log] - Original log object analyzed
  * @returns {object} Slack Block Kit response payload
  */
-export function formatSlackSummaryMessage({ issue, user, log }) {
+export function formatSlackSummaryMessage({ issue, user, log, channel }) {
   const userName = user?.name || user?.username || (user?.id ? `<@${user.id}>` : 'Slack User');
   const service = log?.service || log?.app || 'Unknown Service';
 
-  return {
+  const message = {
     response_type: 'in_channel', // Broadcast to the channel so the whole team sees the diagnosis
     replace_original: false,     // Do not delete the original alert; append summary
     text: `🔍 MCP Log Diagnosis: ${issue}`,
@@ -137,6 +137,12 @@ export function formatSlackSummaryMessage({ issue, user, log }) {
       }
     ]
   };
+
+  if (channel) {
+    message.channel = channel;
+  }
+
+  return message;
 }
 
 /**
@@ -186,6 +192,7 @@ export function verifySlackSignature({ signature, timestamp, rawBody, signingSec
  */
 export function handleSlackInteraction(rawPayload, options = {}) {
   const fetchFn = options.fetchFn || globalThis.fetch;
+  const botToken = options.botToken || process.env.SLACK_BOT_TOKEN;
 
   // Slack sends payload as JSON string inside urlencoded req.body.payload
   const payload = typeof rawPayload === 'string' ? JSON.parse(rawPayload) : rawPayload;
@@ -215,30 +222,188 @@ export function handleSlackInteraction(rawPayload, options = {}) {
     // 1. Diagnose the issue using AI agent / heuristic engine (underlying MCP tool)
     const issue = await analyzeLog(logData);
 
-    // 2. Format response summary for Slack
+    // 2. Extract target channel ID and message thread
+    const channelId = payload.channel?.id || payload.channel || payload.container?.channel_id || payload.channel_id;
+    const threadTs = payload.message?.thread_ts || payload.message?.ts || payload.container?.message_ts;
+
+    // 3. Format response summary for Slack, targeting the specific channel
     const summaryMessage = formatSlackSummaryMessage({
       issue,
       user: payload.user,
-      log: logData
+      log: logData,
+      channel: channelId
     });
 
+    let postedToChannel = false;
     let responseUrlSent = false;
 
-    // 3. Post summary back to Slack channel using response_url
+    // 4. If SLACK_BOT_TOKEN is configured and channelId is known, post directly to that channel via chat.postMessage
+    if (botToken && channelId) {
+      try {
+        const postPayload = {
+          channel: channelId,
+          text: summaryMessage.text,
+          blocks: summaryMessage.blocks
+        };
+
+        // If action occurred within a thread, reply to that thread
+        if (threadTs) {
+          postPayload.thread_ts = threadTs;
+        }
+
+        const chatRes = await fetchFn('https://slack.com/api/chat.postMessage', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${botToken}`
+          },
+          body: JSON.stringify(postPayload)
+        });
+
+        const chatData = await chatRes.json().catch(() => ({}));
+        if (chatRes.ok && chatData.ok) {
+          postedToChannel = true;
+          console.log(`[Slack] Successfully posted diagnosis to channel ${channelId} via chat.postMessage`);
+        } else {
+          console.warn(`[Slack] chat.postMessage failed for channel ${channelId}:`, chatData.error || chatRes.status);
+        }
+      } catch (err) {
+        console.error(`[Slack] Error posting via chat.postMessage to channel ${channelId}:`, err.message);
+      }
+    }
+
+    // 5. Post summary back to Slack channel using response_url (with channel included)
     if (payload.response_url) {
-      const res = await fetchFn(payload.response_url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(summaryMessage)
-      });
-      responseUrlSent = res.ok || res.status === 200;
+      try {
+        const res = await fetchFn(payload.response_url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...summaryMessage,
+            channel: channelId
+          })
+        });
+        responseUrlSent = res.ok || res.status === 200;
+      } catch (err) {
+        console.error(`[Slack] Error posting to response_url:`, err.message);
+      }
     }
 
     return {
       success: true,
       issue,
+      channelId,
+      postedToChannel,
       responseUrlSent,
       summaryMessage
     };
   })();
 }
+
+/**
+ * Lightweight Slack Web API client using global fetch
+ */
+export const slackClient = {
+  chat: {
+    postMessage: async ({ channel, thread_ts, text, blocks }, options = {}) => {
+      const fetchFn = options.fetchFn || globalThis.fetch;
+      const botToken = options.botToken || process.env.SLACK_BOT_TOKEN;
+
+      if (!botToken) {
+        console.warn('[Slack Client] SLACK_BOT_TOKEN not configured; cannot post to channel');
+        return { ok: false, status: 401, error: 'missing_token' };
+      }
+
+      const postBody = {
+        channel,
+        text,
+        ...(blocks ? { blocks } : {}),
+        ...(thread_ts ? { thread_ts } : {})
+      };
+
+      try {
+        const res = await fetchFn('https://slack.com/api/chat.postMessage', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${botToken}`
+          },
+          body: JSON.stringify(postBody)
+        });
+
+        const data = await res.json().catch(() => ({}));
+        return { ok: res.ok && data.ok, status: res.status, ...data };
+      } catch (err) {
+        return { ok: false, status: 500, error: err.message };
+      }
+    }
+  }
+};
+
+/**
+ * Handles incoming Slack Event Subscriptions (e.g. app_mention when the bot is tagged with an error).
+ * Analyzes the error log provided in the message and replies to the channel/thread.
+ *
+ * @param {object} event - Slack event object
+ * @param {object} [options]
+ * @returns {Promise<{ ok: boolean, status: number, result: string, channel: string, thread_ts: string }>}
+ */
+export async function handleSlackEvent(event, options = {}) {
+  if (!event || typeof event !== 'object') {
+    throw new Error('Invalid Slack event payload');
+  }
+
+  // Ignore messages from bots to prevent recursive reply loops
+  if (event.bot_id || event.subtype === 'bot_message') {
+    return { ok: true, ignored: true, reason: 'bot_message' };
+  }
+
+  // Strip bot user mention tag like <@U012345678>
+  const rawText = event.text || '';
+  const cleanText = rawText.replace(/<@[A-Z0-9]+>/g, '').trim();
+
+  let logData;
+  try {
+    logData = JSON.parse(cleanText);
+  } catch {
+    logData = {
+      message: cleanText || 'Error reported in Slack mention',
+      channel: event.channel,
+      user: event.user,
+      timestamp: event.ts
+    };
+  }
+
+  let result;
+  let responseOk = true;
+  let status = 200;
+
+  try {
+    result = await analyzeLog(logData);
+  } catch (err) {
+    responseOk = false;
+    status = 500;
+    result = err.message || 'Log analysis failed';
+  }
+
+  const client = options.client || slackClient;
+  const replyText = responseOk
+    ? `API response:\n${result}`
+    : `API error (${status}): ${result}`;
+
+  const postResult = await client.chat.postMessage({
+    channel: event.channel,
+    thread_ts: event.thread_ts || event.ts,
+    text: replyText
+  }, options);
+
+  return {
+    ok: responseOk,
+    status,
+    result,
+    channel: event.channel,
+    thread_ts: event.thread_ts || event.ts,
+    postResult
+  };
+}
+

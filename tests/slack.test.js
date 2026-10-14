@@ -15,6 +15,19 @@ describe('Slack Interactivity & MCP Integration', () => {
   let server;
   let baseUrl;
 
+  // Helper to generate Slack HMAC signature headers if SLACK_SIGNING_SECRET is active
+  function getAuthHeaders(body) {
+    const secret = process.env.SLACK_SIGNING_SECRET;
+    if (!secret) return {};
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    const sigBasestring = `v0:${timestamp}:${body}`;
+    const signature = 'v0=' + crypto.createHmac('sha256', secret).update(sigBasestring).digest('hex');
+    return {
+      'x-slack-signature': signature,
+      'x-slack-request-timestamp': timestamp
+    };
+  }
+
   before(async () => {
     app = createApp();
     await new Promise((resolve) => {
@@ -76,15 +89,17 @@ describe('Slack Interactivity & MCP Integration', () => {
   });
 
   describe('formatSlackSummaryMessage', () => {
-    it('formats diagnosis into rich Slack Block Kit layout', () => {
+    it('formats diagnosis into rich Slack Block Kit layout with target channel', () => {
       const summary = formatSlackSummaryMessage({
         issue: 'PostgreSQL database connection refused on port 5432',
         user: { id: 'U12345', name: 'alice' },
-        log: { service: 'auth-service' }
+        log: { service: 'auth-service' },
+        channel: 'C123456789'
       });
 
       assert.equal(summary.response_type, 'in_channel');
       assert.equal(summary.replace_original, false);
+      assert.equal(summary.channel, 'C123456789');
       assert.ok(summary.blocks.some(b => b.text?.text?.includes('PostgreSQL')));
       assert.ok(summary.blocks.some(b => b.fields?.some(f => f.text.includes('alice'))));
     });
@@ -167,11 +182,56 @@ describe('Slack Interactivity & MCP Integration', () => {
     });
   });
 
+  describe('handleSlackInteraction with channel targeting', () => {
+    it('posts directly to channel using chat.postMessage when botToken is provided', async () => {
+      let postedToChannelPayload = null;
+      const mockFetch = async (url, opts) => {
+        if (url === 'https://slack.com/api/chat.postMessage') {
+          postedToChannelPayload = JSON.parse(opts.body);
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ ok: true, ts: '1700000000.000100' })
+          };
+        }
+        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      };
+
+      const result = await handleSlackInteraction(
+        {
+          type: 'block_actions',
+          user: { id: 'U111', name: 'dave' },
+          channel: { id: 'C999888' },
+          container: { message_ts: '1700000000.000050' },
+          actions: [
+            {
+              action_id: 'btn_analyze_log',
+              value: JSON.stringify({ level: 'error', message: 'connection refused on port 5432' })
+            }
+          ]
+        },
+        {
+          fetchFn: mockFetch,
+          botToken: 'xoxb-mock-token'
+        }
+      );
+
+      assert.equal(result.success, true);
+      assert.equal(result.channelId, 'C999888');
+      assert.equal(result.postedToChannel, true);
+      assert.ok(postedToChannelPayload);
+      assert.equal(postedToChannelPayload.channel, 'C999888');
+      assert.equal(postedToChannelPayload.thread_ts, '1700000000.000050');
+      assert.ok(postedToChannelPayload.blocks);
+    });
+  });
+
   describe('HTTP API: POST /slack/interactions', () => {
     it('handles synchronous button action (?sync=true) and diagnoses log', async () => {
       const slackPayload = {
         type: 'block_actions',
         user: { id: 'U999', name: 'bob' },
+        channel: { id: 'C123456' },
         actions: [
           {
             action_id: 'btn_analyze_log',
@@ -183,19 +243,26 @@ describe('Slack Interactivity & MCP Integration', () => {
         ]
       };
 
+      const bodyStr = new URLSearchParams({ payload: JSON.stringify(slackPayload) }).toString();
+      const authHeaders = getAuthHeaders(bodyStr);
+
       const res = await fetch(`${baseUrl}/slack/interactions?sync=true`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ payload: JSON.stringify(slackPayload) }).toString()
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          ...authHeaders
+        },
+        body: bodyStr
       });
 
       assert.equal(res.status, 200);
       const data = await res.json();
       assert.equal(data.success, true);
+      assert.equal(data.channelId, 'C123456');
       assert.match(data.issue, /heap space/i);
     });
 
-    it('asynchronously responds 200 immediately and delivers diagnosis to response_url', async () => {
+    it('asynchronously responds 200 immediately and delivers diagnosis with channel to response_url', async () => {
       // 1. Create a lightweight mock HTTP server simulating Slack's response_url
       let receivedSlackSummary = null;
       const mockSlackServer = http.createServer((req, res) => {
@@ -217,6 +284,7 @@ describe('Slack Interactivity & MCP Integration', () => {
         const slackPayload = {
           type: 'block_actions',
           user: { id: 'U1001', name: 'charlie' },
+          channel: { id: 'C987654' },
           response_url: mockResponseUrl,
           actions: [
             {
@@ -229,12 +297,18 @@ describe('Slack Interactivity & MCP Integration', () => {
           ]
         };
 
+        const bodyStr = new URLSearchParams({ payload: JSON.stringify(slackPayload) }).toString();
+        const authHeaders = getAuthHeaders(bodyStr);
+
         // 2. Trigger Slack interaction endpoint
         const startTime = Date.now();
         const res = await fetch(`${baseUrl}/slack/interactions`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({ payload: JSON.stringify(slackPayload) }).toString()
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            ...authHeaders
+          },
+          body: bodyStr
         });
 
         // 3. Must acknowledge immediately (< 3 seconds)
@@ -248,6 +322,7 @@ describe('Slack Interactivity & MCP Integration', () => {
         }
 
         assert.ok(receivedSlackSummary, 'Slack response_url must receive summary');
+        assert.equal(receivedSlackSummary.channel, 'C987654');
         assert.equal(receivedSlackSummary.response_type, 'in_channel');
         assert.ok(receivedSlackSummary.blocks.length >= 3);
         const causeBlock = receivedSlackSummary.blocks.find(b => b.text?.text?.includes('Probable Root Cause'));
@@ -259,15 +334,119 @@ describe('Slack Interactivity & MCP Integration', () => {
     });
 
     it('returns 400 for invalid interaction payload', async () => {
+      const bodyStr = JSON.stringify({ invalid: 'payload' });
+      const authHeaders = getAuthHeaders(bodyStr);
+
       const res = await fetch(`${baseUrl}/slack/interactions`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ invalid: 'payload' })
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders
+        },
+        body: bodyStr
       });
 
       assert.equal(res.status, 400);
       const data = await res.json();
       assert.match(data.error, /invalid payload/i);
+    });
+  });
+
+  describe('Slack Events API: POST /slack/events & app_mention', () => {
+    it('handles url_verification challenge handshake', async () => {
+      const payload = {
+        type: 'url_verification',
+        token: 'test_token',
+        challenge: 'verify_me_123456789'
+      };
+
+      const bodyStr = JSON.stringify(payload);
+      const authHeaders = getAuthHeaders(bodyStr);
+
+      const res = await fetch(`${baseUrl}/slack/events`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders
+        },
+        body: bodyStr
+      });
+
+      assert.equal(res.status, 200);
+      const data = await res.json();
+      assert.equal(data.challenge, 'verify_me_123456789');
+    });
+
+    it('processes app_mention event and replies with API response to channel and thread', async () => {
+      let postedMessage = null;
+      const mockClient = {
+        chat: {
+          postMessage: async (msg) => {
+            postedMessage = msg;
+            return { ok: true, status: 200 };
+          }
+        }
+      };
+
+      const appMentionEvent = {
+        type: 'app_mention',
+        user: 'U456',
+        channel: 'C789',
+        ts: '1700000000.000200',
+        thread_ts: '1700000000.000100',
+        text: '<@U_BOT_123> connection refused when connecting to postgres at 5432'
+      };
+
+      const bodyStr = JSON.stringify({
+        type: 'event_callback',
+        event: appMentionEvent
+      });
+      const authHeaders = getAuthHeaders(bodyStr);
+
+      const res = await fetch(`${baseUrl}/slack/events?sync=true`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders
+        },
+        body: bodyStr
+      });
+
+      assert.equal(res.status, 200);
+      const data = await res.json();
+      assert.equal(data.ok, true);
+      assert.equal(data.channel, 'C789');
+      assert.equal(data.thread_ts, '1700000000.000100');
+      assert.match(data.result, /postgres/i);
+    });
+
+    it('ignores bot messages to prevent recursive reply loops', async () => {
+      const botEvent = {
+        type: 'app_mention',
+        bot_id: 'B999',
+        subtype: 'bot_message',
+        channel: 'C789',
+        text: 'Self mention'
+      };
+
+      const bodyStr = JSON.stringify({
+        type: 'event_callback',
+        event: botEvent
+      });
+      const authHeaders = getAuthHeaders(bodyStr);
+
+      const res = await fetch(`${baseUrl}/slack/events?sync=true`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders
+        },
+        body: bodyStr
+      });
+
+      assert.equal(res.status, 200);
+      const data = await res.json();
+      assert.equal(data.ignored, true);
     });
   });
 });
