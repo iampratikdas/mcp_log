@@ -231,7 +231,7 @@ let prompts= JSON.stringify(logData, null, 2)
         }),
         signal: abortController.signal
       }
-      //  console.log("start========================>",JSON.stringify(option))
+       console.log("start========================>",JSON.stringify(option))
       const response = await fetch(url, option);
       if (response.ok) {
         const data = await response.json();

@@ -158,7 +158,7 @@ export function createApp() {
       console.log(`[Slack Interaction] Received button action from channel: ${channelId || 'unknown'}`);
 
       const isSync = req.query.sync === 'true' || req.headers['x-test-sync'] === 'true';
-
+      console.log("payloadslack======>", payload);
       if (isSync) {
         // Synchronous mode (used for automated tests or debugging)
         const result = await handleSlackInteraction(payload);
