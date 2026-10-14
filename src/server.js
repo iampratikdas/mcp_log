@@ -236,6 +236,7 @@ export function createApp() {
 
       // 2. Handle URL verification challenge FIRST (Event Subscriptions setup handshake)
       const challenge = payload?.challenge ?? req.body?.challenge ?? req.query?.challenge;
+      
       if (payload?.type === 'url_verification' || req.body?.type === 'url_verification' || challenge !== undefined) {
         console.log('[Slack Events] Responding to url_verification challenge:', challenge);
         return res.status(200).json({ challenge: challenge || '' });
