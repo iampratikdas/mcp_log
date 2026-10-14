@@ -151,7 +151,7 @@ export function createApp() {
         });
         return;
       }
-
+      console.log("payload====================================>" , payload)
       // 5. Ensure valid interactive payload structure
       if (!payload || typeof payload !== 'object' || !payload.type) {
         return res.status(400).json({ error: 'Invalid payload: missing Slack interactive payload' });
