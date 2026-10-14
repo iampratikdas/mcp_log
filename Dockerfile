@@ -5,6 +5,8 @@ FROM node:22-alpine
 WORKDIR /app
 
 # Set environment defaults (Cloud Run injects PORT=8080 by default)
+# Sensitive secrets (SLACK_SIGNING_SECRET, SLACK_BOT_TOKEN, API keys) must be
+# injected at runtime via Cloud Run environment / Secret Manager or docker-compose
 ENV NODE_ENV=production \
     PORT=8080
 
