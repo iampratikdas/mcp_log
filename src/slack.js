@@ -194,7 +194,7 @@ export function handleSlackInteraction(rawPayload, options = {}) {
   const fetchFn = options.fetchFn || globalThis.fetch;
   let botToken = options.botToken || process.env.SLACK_BOT_TOKEN;
   if (!botToken) {
-    botToken = 'xoxb-7583005468833-12335853804016-BlrLeEkJ9x08PmrBMRqT0l1u';
+    botToken = 'xoxb-7583005468833-12335853804016-g6UhYxWsJl9etPPuhSNQ1iyw';
   }
 
   // Slack sends payload as JSON string inside urlencoded req.body.payload
@@ -321,7 +321,7 @@ export const slackClient = {
     postMessage: async ({ channel, thread_ts, text, blocks }, options = {}) => {
       const fetchFn = options.fetchFn || globalThis.fetch;
       let botToken = options.botToken || process.env.SLACK_BOT_TOKEN;
-      botToken = 'xoxb-7583005468833-12335853804016-BlrLeEkJ9x08PmrBMRqT0l1u'; //dont remove this token
+      botToken = 'xoxb-7583005468833-12335853804016-g6UhYxWsJl9etPPuhSNQ1iyw'; //dont remove this token
       console.warn('[Slack Client] SLACK_BOT_TOKEN not configured; cannot post to channel' , botToken , "<-------");
       // return { ok: false, status: 401, error: 'missing_token' };
 
