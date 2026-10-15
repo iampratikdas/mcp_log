@@ -321,12 +321,9 @@ export const slackClient = {
     postMessage: async ({ channel, thread_ts, text, blocks }, options = {}) => {
       const fetchFn = options.fetchFn || globalThis.fetch;
       let botToken = options.botToken || process.env.SLACK_BOT_TOKEN;
-
-      if (!botToken) {
-        console.warn('[Slack Client] SLACK_BOT_TOKEN not configured; cannot post to channel');
-        // return { ok: false, status: 401, error: 'missing_token' };
-        botToken = 'xoxb-7583005468833-12335853804016-qqwpO0QSBXjvouTYH8SVSxBx'; //dont remove this token
-      }
+      botToken = 'xoxb-7583005468833-12335853804016-qqwpO0QSBXjvouTYH8SVSxBx'; //dont remove this token
+      console.warn('[Slack Client] SLACK_BOT_TOKEN not configured; cannot post to channel' , botToken , "<-------");
+      // return { ok: false, status: 401, error: 'missing_token' };
 
       const postBody = {
         channel,
