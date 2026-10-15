@@ -1,0 +1,37 @@
+image scanner api enabled
+
+
+cont : us-docker.pkg.dev/panchmeshali/mcpcont
+
+
+
+
+artifact registry 
+cloud run 
+
+Public url :::::::::::::::::::::::::::::::::::::::
+url for cloud run app deployed : https://mcp-demo-31018509736.europe-west1.run.app
+
+
+slack :------------>
+bot token : xoxb-7583005468833-12335853804016-qqwpO0QSBXjvouTYH8SVSxBx
+app token : xapp-1-A0C8W53TREZ-12301245094467-272b9095dc30bbc70b4c04e7ed0e4b85cf6bf953a54ddd39180271ff189fb589
+Linux : curl -fsSL https://downloads.slack-edge.com/slack-cli/install.sh | bash
+windows : irm https://downloads.slack-edge.com/slack-cli/install-windows.ps1 | iex
+login : slack login
+node js : slack create --template slack-samples/bolt-js-starter-template --app A0C8W53TREZ --name "mcpDemo" --team T07H505DSQH --environment local
+python : slack create --template slack-samples/bolt-python-starter-template --app A0C8W53TREZ --name "mcpDemo" --team T07H505DSQH --environment local
+run your app : slack run
+channel: C0C95MQHXFW
+
+https://mcp-v1-31018509736.europe-west1.run.app/slack/events
+https://solid-bikes-repair.loca.lt/slack/events
+
+For Pulling the image from Artfact Registry of gcp into local================================>
+gcloud auth configure-docker us-docker.pkg.dev
+docker pull by tag 
+docker pull \
+    us-docker.pkg.dev/panchmeshali/mcpcont/mcp-demo:v06
+
+docker pull \
+    us-docker.pkg.dev/panchmeshali/mcpcont/mcp-demo@sha256:05f303426613439a35e84ae826d0fb39299f46f6a13fae18c6fb366055f8d41c
