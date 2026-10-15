@@ -476,7 +476,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const server = app.listen(PORT, () => {
     console.log(`=======================================================`);
     console.log(` Log Analyzer MCP Server listening on port ${PORT}`);
-    console.log(` Slack Auth:   Token: ${process.env.SLACK_BOT_TOKEN ? 'Configured Bot Token ✅' : 'NOT FOUND ❌'} | Secret: ${process.env.SLACK_SIGNING_SECRET ? 'Configured ✅' : 'NOT FOUND ❌'}`);
+    console.log(` Slack Auth:   Token: ${process.env.SLACK_BOT_TOKEN ?  ` Configured Bot Token ✅  ${process.env.SLACK_BOT_TOKEN}`: 'NOT FOUND ❌'} | Secret: ${process.env.SLACK_SIGNING_SECRET ? 'Configured ✅' : 'NOT FOUND ❌'}`);
     console.log(` Endpoint:     POST http://localhost:${PORT}/analyze-log`);
     console.log(` Slack Events: POST http://localhost:${PORT}/slack/events`);
     console.log(` Slack Int:    POST http://localhost:${PORT}/slack/interactions`);
