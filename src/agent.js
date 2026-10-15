@@ -223,7 +223,7 @@ let prompts= JSON.stringify(logData, null, 2)
     // if (process.env.GEMINI_API_KEY) {
       const model = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
       const url = `https://aiplatform.googleapis.com/v1/projects/panchmeshali/locations/global/publishers/google/models/gemini-3.1-flash-lite:streamGenerateContent`;
-      // cons t url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env.GEMINI_API_KEY}`;
+      // const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env.GEMINI_API_KEY}`;
       let accessToken = await execSync("gcloud auth application-default print-access-token");
       let option ={
         method: 'POST',
