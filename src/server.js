@@ -33,7 +33,16 @@ export function createApp() {
     }
   }));
 
-  // 3. Strict Error Handling for Invalid/Malformed JSON Input
+  // 3. Fallback Text/Raw Body Parser for any other Content-Types (e.g. text/plain, raw JSON without header)
+  app.use(express.text({
+    limit: '2mb',
+    type: '*/*',
+    verify: (req, res, buf) => {
+      req.rawBody = buf;
+    }
+  }));
+
+  // 4. Strict Error Handling for Invalid/Malformed JSON Input
   app.use((err, req, res, next) => {
     if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
       return res.status(400).json({
@@ -103,23 +112,67 @@ export function createApp() {
    * immediately acknowledges to avoid 3-second timeout, then runs log analysis
    * and posts the summary back to the Slack channel using payload.response_url.
    */
-  app.post('/slack/interactions', async (req, res) => {
+  app.all(['/slack/interactions', '/slack/interactions/', '/slack/interactive', '/slack/interactivity'], async (req, res) => {
+    if (req.method === 'GET') {
+      return res.status(200).json({
+        status: 'ok',
+        endpoint: '/slack/interactions',
+        message: 'Slack Interactivity endpoint is active and ready for POST requests.'
+      });
+    }
+
     try {
-      // 1. Normalize payload from either JSON body or form-urlencoded string
+      // 1. Normalize payload from either JSON body, form-urlencoded string, or rawBody
       let payload = req.body;
-      if (typeof req.body?.payload === 'string') {
+      if (typeof payload === 'string') {
         try {
-          payload = JSON.parse(req.body.payload);
+          payload = JSON.parse(payload);
+        } catch {
+          try {
+            const params = new URLSearchParams(payload);
+            const obj = {};
+            for (const [k, v] of params.entries()) obj[k] = v;
+            if (Object.keys(obj).length > 0) payload = obj;
+          } catch {}
+        }
+      }
+      if (typeof payload?.payload === 'string') {
+        try {
+          payload = JSON.parse(payload.payload);
         } catch {
           return res.status(400).json({ error: 'Invalid JSON payload in form-urlencoded body' });
         }
       }
+      if ((!payload || (typeof payload === 'object' && Object.keys(payload).length === 0)) && req.rawBody && req.rawBody.length > 0) {
+        const rawStr = req.rawBody.toString('utf8').trim();
+        try {
+          payload = JSON.parse(rawStr);
+        } catch {
+          try {
+            const params = new URLSearchParams(rawStr);
+            const obj = {};
+            for (const [k, v] of params.entries()) obj[k] = v;
+            if (Object.keys(obj).length > 0) payload = obj;
+          } catch {}
+        }
+      }
+      if (payload && typeof payload === 'object') {
+        const firstKey = Object.keys(payload)[0];
+        if (firstKey && (firstKey.startsWith('{') || firstKey.startsWith('['))) {
+          try {
+            payload = JSON.parse(firstKey);
+          } catch {}
+        }
+      }
 
       // 2. Handle URL verification challenge FIRST (Event Subscriptions handshake)
-      const challenge = payload?.challenge || req.body?.challenge;
-      if (payload?.type === 'url_verification' || req.body?.type === 'url_verification' || (challenge && !payload?.type)) {
+      const challenge = payload?.challenge ?? req.body?.challenge ?? req.query?.challenge;
+      if (payload?.type === 'url_verification' || req.body?.type === 'url_verification' || req.query?.type === 'url_verification' || challenge !== undefined) {
         console.log('[Slack Interactions] Responding to url_verification challenge:', challenge);
-        return res.status(200).json({ challenge });
+        if (req.headers.accept === 'text/plain') {
+          return res.status(200).type('text/plain').send(challenge || '');
+        }
+        return res.status(200).json({ challenge: challenge || '' });
       }
 
       // 3. Signature verification if SLACK_SIGNING_SECRET is configured
@@ -206,15 +259,28 @@ export function createApp() {
    *      text: response.ok ? `API response:\n${result}` : `API error (${response.status}): ${result}`
    *    });
    */
-  app.post('/slack/events', async (req, res) => {
+  app.all(['/slack/events', '/slack/eve', '/slack/events/', '/slack/eve/'], async (req, res) => {
+    if (req.method === 'GET') {
+      return res.status(200).json({
+        status: 'ok',
+        endpoint: '/slack/events',
+        message: 'Slack Events endpoint is active and ready for POST requests.'
+      });
+    }
+
     try {
-      // 1. Normalize payload from JSON body, URL-encoded body, or raw body buffer
+      // 1. Normalize payload from JSON body, URL-encoded body, raw string, or query params
       let payload = req.body;
       if (typeof payload === 'string') {
         try {
           payload = JSON.parse(payload);
         } catch {
-          // Keep as string
+          try {
+            const params = new URLSearchParams(payload);
+            const obj = {};
+            for (const [k, v] of params.entries()) obj[k] = v;
+            if (Object.keys(obj).length > 0) payload = obj;
+          } catch {}
         }
       }
       if (typeof payload?.payload === 'string') {
@@ -225,20 +291,36 @@ export function createApp() {
         }
       }
       if ((!payload || (typeof payload === 'object' && Object.keys(payload).length === 0)) && req.rawBody && req.rawBody.length > 0) {
+        const rawStr = req.rawBody.toString('utf8').trim();
         try {
-          payload = JSON.parse(req.rawBody.toString('utf8'));
+          payload = JSON.parse(rawStr);
         } catch {
-          // Keep unparsed
+          try {
+            const params = new URLSearchParams(rawStr);
+            const obj = {};
+            for (const [k, v] of params.entries()) obj[k] = v;
+            if (Object.keys(obj).length > 0) payload = obj;
+          } catch {}
+        }
+      }
+      if (payload && typeof payload === 'object') {
+        const firstKey = Object.keys(payload)[0];
+        if (firstKey && (firstKey.startsWith('{') || firstKey.startsWith('['))) {
+          try {
+            payload = JSON.parse(firstKey);
+          } catch {}
         }
       }
 
-      console.log('[Slack Events] Incoming request payload:', JSON.stringify(payload));
-
       // 2. Handle URL verification challenge FIRST (Event Subscriptions setup handshake)
       const challenge = payload?.challenge ?? req.body?.challenge ?? req.query?.challenge;
-      
-      if (payload?.type === 'url_verification' || req.body?.type === 'url_verification' || challenge !== undefined) {
+      console.log('[Slack Events] Incoming request payload:', JSON.stringify(payload || {}));
+
+      if (payload?.type === 'url_verification' || req.body?.type === 'url_verification' || req.query?.type === 'url_verification' || challenge !== undefined) {
         console.log('[Slack Events] Responding to url_verification challenge:', challenge);
+        if (req.headers.accept === 'text/plain') {
+          return res.status(200).type('text/plain').send(challenge || '');
+        }
         return res.status(200).json({ challenge: challenge || '' });
       }
 

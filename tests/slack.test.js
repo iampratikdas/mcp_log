@@ -401,6 +401,48 @@ describe('Slack Interactivity & MCP Integration', () => {
       assert.equal(data.challenge, 'verify_me_123456789');
     });
 
+    it('handles url_verification even when Content-Type is text/plain or missing', async () => {
+      const payload = {
+        type: 'url_verification',
+        challenge: 'text_plain_challenge_999'
+      };
+
+      const resText = await fetch(`${baseUrl}/slack/events`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify(payload)
+      });
+      assert.equal(resText.status, 200);
+      const dataText = await resText.json();
+      assert.equal(dataText.challenge, 'text_plain_challenge_999');
+
+      const resNoHeader = await fetch(`${baseUrl}/slack/events`, {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+      assert.equal(resNoHeader.status, 200);
+      const dataNoHeader = await resNoHeader.json();
+      assert.equal(dataNoHeader.challenge, 'text_plain_challenge_999');
+    });
+
+    it('handles url_verification on /slack/eve alias', async () => {
+      const res = await fetch(`${baseUrl}/slack/eve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'url_verification', challenge: 'eve_challenge' })
+      });
+      assert.equal(res.status, 200);
+      const data = await res.json();
+      assert.equal(data.challenge, 'eve_challenge');
+    });
+
+    it('returns 200 OK for GET /slack/events', async () => {
+      const res = await fetch(`${baseUrl}/slack/events`);
+      assert.equal(res.status, 200);
+      const data = await res.json();
+      assert.equal(data.status, 'ok');
+    });
+
     it('processes app_mention event and replies with API response to channel and thread', async () => {
       let postedMessage = null;
       const mockClient = {
